@@ -15,14 +15,17 @@
 # pyrcc5 -o libs/resources.py resources.qrc
 import argparse
 import ast
+import base64
 import codecs
 import json
+import re
 import os
 import platform
 import subprocess
 import sys
 import traceback
 from functools import partial
+from urllib import request, error
 
 import openpyxl
 import cv2
@@ -143,6 +146,9 @@ class MainWindow(QMainWindow):
         img_list_natural_sort=True,
         bbox_auto_zoom_center=False,
         kie_mode=False,
+        use_ocr_api=False,
+        ocr_api_url=None,
+        ocr_api_timeout=15,
         default_filename=None,
         default_predefined_class_file=None,
         default_save_dir=None,
@@ -184,6 +190,15 @@ class MainWindow(QMainWindow):
         self.key_dialog_tip = getStr("keyDialogTip")
 
         self.defaultSaveDir = default_save_dir
+        self.use_ocr_api = use_ocr_api
+        self.ocr_api_url = (
+            ocr_api_url
+            if ocr_api_url
+            else os.environ.get(
+                "PPOCRLABEL_OCR_API_URL", "http://192.168.50.20:8866/ocr/prediction"
+            )
+        )
+        self.ocr_api_timeout = ocr_api_timeout
 
         params = {
             "use_pdserving": False,
@@ -205,15 +220,22 @@ class MainWindow(QMainWindow):
             params["cls_model_dir"] = cls_model_dir
 
         self.ocr = PaddleOCR(**params)
-        self.table_ocr = PPStructure(
-            use_pdserving=False, use_gpu=gpu, lang=lang, layout=False, show_log=False
-        )
-
-        if os.path.exists("./data/paddle.png"):
-            result = self.ocr.ocr("./data/paddle.png", cls=True, det=True)
-            result = self.table_ocr(
-                "./data/paddle.png", return_ocr_result_in_table=True
+        if not self.use_ocr_api:
+            self.table_ocr = PPStructure(
+                use_pdserving=False, use_gpu=gpu, lang=lang, layout=False, show_log=False
             )
+
+        if os.path.exists("./data/paddle.jpg"):
+            img = cv2.imread("./data/paddle.jpg", cv2.IMREAD_UNCHANGED)
+            if img is not None and img.ndim == 3 and img.shape[2] == 4:
+                # RGBA -> RGB
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+            result = self.ocr.ocr(img, cls=True, det=True)
+            if not self.use_ocr_api:
+                result = self.table_ocr(
+                    img, return_ocr_result_in_table=True
+                )
 
         # For loading all image under a directory
         self.mImgList = []
@@ -1690,6 +1712,13 @@ class MainWindow(QMainWindow):
             shape.close()
             s.append(shape)
 
+            if self.kie_mode and key_cls and key_cls != "None":
+                if not self.keyList.findItemsByLabel(key_cls):
+                    item = self.keyList.createItemFromLabel(key_cls)
+                    self.keyList.addItem(item)
+                    rgb = self._get_rgb_by_label(key_cls, self.kie_mode)
+                    self.keyList.setItemLabel(item, key_cls, rgb)
+
             self._update_shape_color(shape)
             self.addLabel(shape)
 
@@ -1962,7 +1991,12 @@ class MainWindow(QMainWindow):
     def _get_rgb_by_label(self, label, kie_mode):
         shift_auto_shape_color = 2  # use for random color
         if kie_mode and label != "None":
-            item = self.keyList.findItemsByLabel(label)[0]
+            items = self.keyList.findItemsByLabel(label)
+            if not items:
+                item = self.keyList.createItemFromLabel(label)
+                self.keyList.addItem(item)
+            else:
+                item = items[0]
             label_id = self.keyList.indexFromItem(item).row() + 1
             label_id += shift_auto_shape_color
             return LABEL_COLORMAP[label_id % len(LABEL_COLORMAP)]
@@ -2890,16 +2924,33 @@ class MainWindow(QMainWindow):
             if image_basename not in recorded_basenames:
                 uncheckedList.append(image_path)
 
-        self.autoDialog = AutoDialog(
-            parent=self, ocr=self.ocr, mImgList=uncheckedList, lenbar=len(uncheckedList)
-        )
-        self.autoDialog.popUp()
-        self.haveAutoReced = True
-        self.filePath = self.mImgList[self.currIndex]
-        self.loadFile(self.filePath, isAdjustScale=False)
-        self.saveCacheLabel()
+        if self.use_ocr_api:
+            for image_path in uncheckedList:
+                items = self._call_ocr_api_by_path(image_path)
+                if items is None:
+                    continue
+                shapes = self._shapes_from_api_items(items)
+                if self.kie_mode:
+                    shapes = self._apply_kie_value_rules(shapes)
+                trans_dic = self._trans_dic_from_shapes(shapes)
+                imgidx = self.getImglabelidx(image_path)
+                self.Cachelabel[imgidx] = trans_dic
+            self.haveAutoReced = True
+            self.filePath = self.mImgList[self.currIndex]
+            self.loadFile(self.filePath, isAdjustScale=False)
+            self.saveCacheLabel()
+            self.init_key_list(self.Cachelabel)
+        else:
+            self.autoDialog = AutoDialog(
+                parent=self, ocr=self.ocr, mImgList=uncheckedList, lenbar=len(uncheckedList)
+            )
+            self.autoDialog.popUp()
+            self.haveAutoReced = True
+            self.filePath = self.mImgList[self.currIndex]
+            self.loadFile(self.filePath, isAdjustScale=False)
+            self.saveCacheLabel()
 
-        self.init_key_list(self.Cachelabel)
+            self.init_key_list(self.Cachelabel)
 
     def reRecognition(self):
         img = cv2.imdecode(np.fromfile(self.filePath, dtype=np.uint8), 1)
@@ -3019,6 +3070,19 @@ class MainWindow(QMainWindow):
         """
         Table Recegnition
         """
+        if self.use_ocr_api:
+            items = self._call_ocr_api_by_path(self.filePath)
+            if items is None:
+                QMessageBox.information(
+                    self, "Information", "OCR API failed, please try again."
+                )
+                return
+            shapes = self._shapes_from_api_items(items)
+            if self.kie_mode:
+                shapes = self._apply_kie_value_rules(shapes)
+            self._load_shapes_to_canvas(shapes)
+            return
+
         from paddleocr import to_excel
 
         import time
@@ -3099,8 +3163,12 @@ class MainWindow(QMainWindow):
                     order_index += 1
                     # shape.locked = False
                     shape.close()
-                    self.addLabel(shape)
                     shapes.append(shape)
+                if self.kie_mode:
+                    shapes = self._apply_kie_value_rules(shapes)
+                for idx, shape in enumerate(shapes):
+                    shape.idx = idx
+                    self.addLabel(shape)
                 self.setDirty()
                 self.canvas.loadShapes(shapes)
 
@@ -3151,6 +3219,368 @@ class MainWindow(QMainWindow):
 
         print("time cost: ", time.time() - start)
 
+    def _call_ocr_api(self, image_bytes):
+        if not self.ocr_api_url:
+            return None
+        payload = {
+            "key": ["image"],
+            "value": [base64.b64encode(image_bytes).decode("ascii")],
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            self.ocr_api_url, data=data, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with request.urlopen(req, timeout=self.ocr_api_timeout) as resp:
+                resp_json = json.loads(resp.read().decode("utf-8"))
+        except (error.URLError, error.HTTPError, ValueError):
+            return None
+        if resp_json.get("err_no", 1) != 0:
+            return None
+        value = resp_json.get("value", [])
+        if not value:
+            return []
+        raw = value[0]
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+        if isinstance(raw, list):
+            return raw
+        return None
+
+    def _call_ocr_api_by_path(self, image_path):
+        try:
+            with open(image_path, "rb") as f:
+                image_bytes = f.read()
+        except Exception:
+            return None
+        return self._call_ocr_api(image_bytes)
+
+    def _shapes_from_api_items(self, items):
+        shapes = []
+        order_index = 0
+        for item in items:
+            rec_text = item.get("text", "")
+            bbox = item.get("text_region", [])
+            if not bbox or len(bbox) < 4:
+                continue
+            shape = Shape(label=rec_text, line_color=DEFAULT_LINE_COLOR, key_cls=None)
+            for point in bbox:
+                x, y = point
+                x, y, snapped = self.canvas.snapPointToCanvas(x, y)
+                shape.addPoint(QPointF(x, y))
+            shape.difficult = False
+            shape.idx = order_index
+            order_index += 1
+            shape.close()
+            shapes.append(shape)
+        return shapes
+
+    def _trans_dic_from_shapes(self, shapes):
+        trans_dic = []
+        for shape in shapes:
+            d = {
+                "transcription": shape.label,
+                "points": [(int(p.x()), int(p.y())) for p in shape.points],
+                "difficult": shape.difficult,
+            }
+            if self.kie_mode:
+                d.update({"key_cls": shape.key_cls if shape.key_cls else "None"})
+            trans_dic.append(d)
+        return trans_dic
+
+    def _load_shapes_to_canvas(self, shapes):
+        self.itemsToShapes.clear()
+        self.shapesToItems.clear()
+        self.itemsToShapesbox.clear()
+        self.shapesToItemsbox.clear()
+        self.labelList.clear()
+        self.indexList.clear()
+        self.BoxList.clear()
+        self.result_dic = []
+        self.result_dic_locked = []
+
+        for idx, shape in enumerate(shapes):
+            shape.idx = idx
+            self.addLabel(shape)
+        self.setDirty()
+        self.canvas.loadShapes(shapes)
+
+    def _normalize_kie_text(self, text):
+        if text is None:
+            return ""
+        t = text.strip()
+        t = re.sub(r"^\\s*\\d+\\s*[\\.、)）:]\\s*", "", t)
+        t = re.sub(r"[\\s\\u3000]+", "", t)
+        return t
+
+    def _apply_kie_value_rules(self, shapes, row_overlap=0.4, min_x_gap=5.0):
+        # Keep only value boxes and assign key_cls based on nearby label boxes.
+        label_specs = [
+            {"patterns": ["合格证编号"], "value_keys": ["vc_no"]},
+            {"patterns": ["发证日期"], "value_keys": ["vc_issue_date"]},
+            {"patterns": ["车辆制造企业名称"], "value_keys": ["vc_manu_enterprise"]},
+            {
+                "patterns": ["车辆品牌/车辆名称", "车辆品牌", "车辆名称"],
+                "value_keys": ["vc_brands", "vc_type"],
+            },
+            {"patterns": ["车辆型号"], "value_keys": ["vc_model_no"]},
+            {"patterns": ["车辆识别代号/车架号", "车架号"], "value_keys": ["vc_vin"]},
+            {"patterns": ["车身颜色"], "value_keys": ["vc_color"]},
+            {"patterns": ["发动机号"], "value_keys": ["vc_engineno"]},
+            {"patterns": ["燃料种类", "燃料类型"], "value_keys": ["vc_fuel"]},
+            {
+                "patterns": ["排量和功率", "排量/功率", "排量和功率（ml/kW）"],
+                "value_keys": ["vc_displace", "vc_power"],
+            },
+            {"patterns": ["排放标准"], "value_keys": ["vc_emission_standard"]},
+            {"patterns": ["轮胎规格"], "value_keys": ["vc_tyre_size"]},
+            {"patterns": ["轴距"], "value_keys": ["vc_wheelbase"]},
+            {"patterns": ["总质量"], "value_keys": ["vc_totalw"]},
+            {"patterns": ["整备质量"], "value_keys": ["vc_curbw"]},
+            {"patterns": ["额定载客"], "value_keys": ["vc_carrying_num"]},
+            {"patterns": ["车辆制造日期"], "value_keys": ["vc_manu_date"]},
+            {"patterns": ["车辆生产单位地址"], "value_keys": ["vc_manu_addr"]},
+        ]
+
+        def build_patterns(patterns):
+            return [
+                re.compile(re.escape(self._normalize_kie_text(p))) for p in patterns
+            ]
+
+        compiled_specs = []
+        all_label_patterns = []
+        for spec in label_specs:
+            pats = build_patterns(spec["patterns"])
+            compiled_specs.append({"patterns": pats, "value_keys": spec["value_keys"]})
+            all_label_patterns.extend(pats)
+
+        def shape_box(s):
+            xs = [p.x() for p in s.points]
+            ys = [p.y() for p in s.points]
+            minx, maxx = min(xs), max(xs)
+            miny, maxy = min(ys), max(ys)
+            return {
+                "shape": s,
+                "text": s.label,
+                "minx": minx,
+                "maxx": maxx,
+                "miny": miny,
+                "maxy": maxy,
+                "cx": (minx + maxx) / 2.0,
+                "cy": (miny + maxy) / 2.0,
+                "h": maxy - miny,
+            }
+
+        def is_key_label(text):
+            norm = self._normalize_kie_text(text)
+            return any(p.search(norm) for p in all_label_patterns)
+
+        def same_row(a, b):
+            overlap = max(0.0, min(a["maxy"], b["maxy"]) - max(a["miny"], b["miny"]))
+            denom = min(a["h"], b["h"]) if min(a["h"], b["h"]) > 0 else 1.0
+            return (overlap / denom) >= row_overlap
+
+        def extract_inline_value(text, patterns):
+            norm = self._normalize_kie_text(text)
+            for p in patterns:
+                m = p.search(norm)
+                if m:
+                    start, end = m.span()
+                    leftover = (norm[:start] + norm[end:]).strip()
+                    leftover = leftover.strip(":：/\\-| ")
+                    return leftover
+            return ""
+
+        def make_right_value_shape(
+            src_shape, value_text, min_ratio=0.3, max_ratio=0.9, fixed_ratio=None
+        ):
+            xs = [p.x() for p in src_shape.points]
+            ys = [p.y() for p in src_shape.points]
+            minx, maxx = min(xs), max(xs)
+            miny, maxy = min(ys), max(ys)
+            width = maxx - minx
+            if fixed_ratio is not None:
+                ratio = max(min_ratio, min(max_ratio, fixed_ratio))
+            else:
+                total_len = len(self._normalize_kie_text(src_shape.label)) or 1
+                val_len = len(self._normalize_kie_text(value_text)) or 1
+                ratio = max(min_ratio, min(max_ratio, val_len / total_len))
+            new_minx = maxx - width * ratio
+            rext_bbox = [[new_minx, miny], [maxx, miny], [maxx, maxy], [new_minx, maxy]]
+            shape = Shape(label=value_text, line_color=DEFAULT_LINE_COLOR, key_cls=None)
+            for point in rext_bbox:
+                x, y = point
+                x, y, snapped = self.canvas.snapPointToCanvas(x, y)
+                shape.addPoint(QPointF(x, y))
+            shape.difficult = False
+            shape.close()
+            return shape
+
+        def resize_shape_right_inplace(
+            src_shape, value_text, min_ratio=0.3, max_ratio=0.9, fixed_ratio=None
+        ):
+            xs = [p.x() for p in src_shape.points]
+            ys = [p.y() for p in src_shape.points]
+            minx, maxx = min(xs), max(xs)
+            miny, maxy = min(ys), max(ys)
+            width = maxx - minx
+            if fixed_ratio is not None:
+                ratio = max(min_ratio, min(max_ratio, fixed_ratio))
+            else:
+                total_len = len(self._normalize_kie_text(src_shape.label)) or 1
+                val_len = len(self._normalize_kie_text(value_text)) or 1
+                ratio = max(min_ratio, min(max_ratio, val_len / total_len))
+            new_minx = maxx - width * ratio
+            src_shape.points = [
+                QPointF(new_minx, miny),
+                QPointF(maxx, miny),
+                QPointF(maxx, maxy),
+                QPointF(new_minx, maxy),
+            ]
+            src_shape.close()
+            return src_shape
+
+        def group_lines(candidates):
+            if not candidates:
+                return []
+            heights = sorted([c["h"] for c in candidates if c["h"] > 0])
+            median_h = heights[len(heights) // 2] if heights else 1.0
+            line_tol = max(3.0, median_h * 0.6)
+
+            candidates.sort(key=lambda b: (b["cy"], b["cx"]))
+            lines = []
+            current = []
+            current_cy = None
+            for c in candidates:
+                if current_cy is None or abs(c["cy"] - current_cy) <= line_tol:
+                    current.append(c)
+                    if current_cy is None:
+                        current_cy = c["cy"]
+                    else:
+                        current_cy = (current_cy + c["cy"]) / 2.0
+                else:
+                    lines.append(current)
+                    current = [c]
+                    current_cy = c["cy"]
+            if current:
+                lines.append(current)
+            return lines
+
+        def strip_prefix(text, prefixes):
+            t = text
+            for prefix in prefixes:
+                t = re.sub(
+                    r"^\\s*" + re.escape(prefix) + r"\\s*[:：]?\\s*",
+                    "",
+                    t,
+                    count=1,
+                )
+            return t.strip()
+
+        boxes = [shape_box(s) for s in shapes]
+        key_flags = {b["shape"]: is_key_label(b["text"]) for b in boxes}
+        used_shapes = set()
+        out_shapes = []
+
+        for spec in compiled_specs:
+            label_boxes = []
+            for b in boxes:
+                norm = self._normalize_kie_text(b["text"])
+                if any(p.search(norm) for p in spec["patterns"]):
+                    label_boxes.append(b)
+            if not label_boxes:
+                continue
+            label_boxes.sort(key=lambda b: (b["cy"], b["cx"]))
+            label_box = label_boxes[0]
+
+            candidates = []
+            for b in boxes:
+                if b["shape"] is label_box["shape"]:
+                    continue
+                if key_flags.get(b["shape"], False):
+                    continue
+                if b["cx"] <= (label_box["maxx"] + min_x_gap):
+                    continue
+                if same_row(label_box, b):
+                    candidates.append(b)
+            candidates.sort(key=lambda b: b["cx"])
+
+            inline_value = extract_inline_value(
+                label_box["text"], spec["patterns"]
+            )
+
+            start_idx = 0
+            if inline_value and set(spec["value_keys"]) == {"vc_displace", "vc_power"}:
+                inline_shape = make_right_value_shape(
+                    label_box["shape"], inline_value, fixed_ratio=0.2
+                )
+                inline_shape.key_cls = "vc_displace"
+                out_shapes.append(inline_shape)
+                used_shapes.add(inline_shape)
+                start_idx = 1
+            elif inline_value and spec["value_keys"] == ["vc_vin"]:
+                inline_shape = make_right_value_shape(
+                    label_box["shape"], inline_value, fixed_ratio=0.45
+                )
+                inline_shape.key_cls = "vc_vin"
+                out_shapes.append(inline_shape)
+                used_shapes.add(inline_shape)
+                start_idx = 1
+            elif inline_value and spec["value_keys"] == ["vc_manu_addr"]:
+                inline_shape = resize_shape_right_inplace(
+                    label_box["shape"], inline_value, fixed_ratio=0.69
+                )
+                inline_shape.key_cls = "vc_manu_addr"
+                out_shapes.append(inline_shape)
+                used_shapes.add(inline_shape)
+                # Prevent duplicate address boxes from same row
+                for c in candidates:
+                    used_shapes.add(c["shape"])
+                candidates = []
+                start_idx = 1
+
+            if candidates:
+                for key in spec["value_keys"][start_idx:]:
+                    candidate = None
+                    while candidates:
+                        c = candidates.pop(0)
+                        if c["shape"] not in used_shapes:
+                            candidate = c
+                            break
+                    if candidate is None:
+                        break
+                    candidate["shape"].key_cls = key
+                    out_shapes.append(candidate["shape"])
+                    used_shapes.add(candidate["shape"])
+            else:
+                pass
+
+        # Production unit address line (inline value)
+        for b in boxes:
+            norm = self._normalize_kie_text(b["text"])
+            if "车辆生产单位地址" in norm:
+                if b["shape"] in used_shapes:
+                    continue
+                text = strip_prefix(b["text"], ["车辆生产单位地址"])
+                if not text:
+                    continue
+                shape = Shape(
+                    label=text, line_color=DEFAULT_LINE_COLOR, key_cls="vc_manu_addr"
+                )
+                for point in b["shape"].points:
+                    x, y = point.x(), point.y()
+                    x, y, snapped = self.canvas.snapPointToCanvas(x, y)
+                    shape.addPoint(QPointF(x, y))
+                shape.difficult = False
+                shape.close()
+                out_shapes.append(shape)
+                used_shapes.add(b["shape"])
+
+        return out_shapes
+
     def cellreRecognition(self):
         """
         re-recognise text in a cell
@@ -3178,7 +3608,8 @@ class MainWindow(QMainWindow):
             # merge the text result in the cell
             texts = ""
             probs = 0.0  # the probability of the cell is avgerage prob of every text box in the cell
-            bboxes = self.ocr.ocr(img_crop, det=True, rec=False, cls=False)[0]
+            det_res = self.ocr.ocr(img_crop, det=True, rec=True, cls=False)[0]
+            bboxes = [r[0] for r in det_res] if det_res else []
             if len(bboxes) > 0:
                 bboxes.reverse()  # top row text at first
                 for _bbox in bboxes:
@@ -3645,6 +4076,9 @@ def get_main_app(argv=[]):
         "--img_list_natural_sort", type=str2bool, default=True, nargs="?"
     )
     arg_parser.add_argument("--kie", type=str2bool, default=False, nargs="?")
+    arg_parser.add_argument("--use_ocr_api", type=str2bool, default=False, nargs="?")
+    arg_parser.add_argument("--ocr_api_url", type=str, default=None, nargs="?")
+    arg_parser.add_argument("--ocr_api_timeout", type=int, default=15, nargs="?")
     arg_parser.add_argument(
         "--predefined_classes_file",
         default=os.path.join(
@@ -3675,6 +4109,9 @@ def get_main_app(argv=[]):
         gpu=args.gpu,
         img_list_natural_sort=args.img_list_natural_sort,
         kie_mode=args.kie,
+        use_ocr_api=args.use_ocr_api,
+        ocr_api_url=args.ocr_api_url,
+        ocr_api_timeout=args.ocr_api_timeout,
         default_predefined_class_file=args.predefined_classes_file,
         det_model_dir=args.det_model_dir,
         rec_model_dir=args.rec_model_dir,

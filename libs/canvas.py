@@ -485,7 +485,54 @@ class Canvas(QWidget):
             shape.moveVertexBy(lindex, lshift)
 
         else:
-            shape.moveVertexBy(index, shiftPos)
+            if self._is_axis_aligned_rect(shape):
+                # Keep rectangle while resizing: rebuild an axis-aligned rect.
+                new_points = [QPointF(p.x(), p.y()) for p in shape.points]
+                new_points[index] = QPointF(pos.x(), pos.y())
+                xs = [p.x() for p in new_points]
+                ys = [p.y() for p in new_points]
+                minx, maxx = min(xs), max(xs)
+                miny, maxy = min(ys), max(ys)
+                shape.points = [
+                    QPointF(minx, miny),
+                    QPointF(maxx, miny),
+                    QPointF(maxx, maxy),
+                    QPointF(minx, maxy),
+                ]
+                shape.close()
+            else:
+                # For rotated quads, drag the closest edge (move two vertices together).
+                if len(shape.points) == 4:
+                    prev_i = (index - 1) % 4
+                    next_i = (index + 1) % 4
+                    dvx = shiftPos.x()
+                    dvy = shiftPos.y()
+                    mag = (dvx * dvx + dvy * dvy) ** 0.5
+                    if mag < 1e-6:
+                        return
+                    dvx /= mag
+                    dvy /= mag
+
+                    def edge_dot(adj_i):
+                        ex = shape[adj_i].x() - point.x()
+                        ey = shape[adj_i].y() - point.y()
+                        emag = (ex * ex + ey * ey) ** 0.5
+                        if emag < 1e-6:
+                            return 1.0
+                        ex /= emag
+                        ey /= emag
+                        return abs(ex * dvx + ey * dvy)
+
+                    # Pick edge most perpendicular to drag direction
+                    dot_prev = edge_dot(prev_i)
+                    dot_next = edge_dot(next_i)
+                    move_adj = prev_i if dot_prev < dot_next else next_i
+
+                    shape.moveVertexBy(index, shiftPos)
+                    shape.moveVertexBy(move_adj, shiftPos)
+                    shape.close()
+                else:
+                    shape.moveVertexBy(index, shiftPos)
 
     def boundedMoveShape(self, shapes, pos):
         if type(shapes).__name__ != "list":
@@ -514,6 +561,25 @@ class Canvas(QWidget):
             self.prevPoint = pos
             return True
         return False
+
+    def _is_axis_aligned_rect(self, shape, tol=1.0):
+        if len(shape.points) != 4:
+            return False
+        xs = [p.x() for p in shape.points]
+        ys = [p.y() for p in shape.points]
+
+        def cluster(vals):
+            clusters = []
+            for v in vals:
+                for i, c in enumerate(clusters):
+                    if abs(v - c) <= tol:
+                        clusters[i] = (c + v) / 2.0
+                        break
+                else:
+                    clusters.append(v)
+            return clusters
+
+        return len(cluster(xs)) == 2 and len(cluster(ys)) == 2
 
     def deSelectShape(self):
         if self.selectedShapes:
