@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
             self.keyListDock.setWidget(self.keyList)
             self.keyListDock.setFeatures(QDockWidget.NoDockWidgetFeatures)
             filelistLayout.addWidget(self.keyListDock)
+            self._init_key_list_from_predefined()
 
         self.auto_recognition_num = 1
 
@@ -2444,6 +2445,21 @@ class MainWindow(QMainWindow):
                 fit_to_content={"column": True, "row": False},
                 flags=None,
             )
+
+    def _init_key_list_from_predefined(self):
+        if not self.kie_mode:
+            return
+        if not self.labelHist:
+            return
+        for key_text in self.labelHist:
+            if not key_text or key_text == "None":
+                continue
+            self.existed_key_cls_set.add(key_text)
+            if not self.keyList.findItemsByLabel(key_text):
+                item = self.keyList.createItemFromLabel(key_text)
+                self.keyList.addItem(item)
+                rgb = self._get_rgb_by_label(key_text, self.kie_mode)
+                self.keyList.setItemLabel(item, key_text, rgb)
 
     def importDirImages(self, dirpath, isDelete=False):
         if not self.mayContinue() or not dirpath:
