@@ -319,3 +319,14 @@ PPOCRLabel supports three ways to export Label.txt
 
 1. [Tzutalin. LabelImg. Git code (2015)](https://github.com/tzutalin/labelImg)
 2. [PaddleX Text Detection/Text Recognition Task Module Data Annotation Tutorial](https://paddlepaddle.github.io/PaddleX/latest/en/data_annotations/ocr_modules/text_detection_recognition.html)
+
+
+### 
+运行
+ python PPOCRLabel.py --lang ch --kie True --use_ocr_api True --ocr_api_url http://192.168.50.20:8866/ocr/prediction
+
+检查并修改标注
+python tools/check_kie_labels.py --label_txt "D:\vehicle_compliance_2\Label.txt" --dedup 
+
+替换识别结果
+ python tools/fix_labeltxt_unrecognized.py --label_txt "D:\vehicle_compliance_1\Label.txt"
