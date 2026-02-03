@@ -1834,7 +1834,11 @@ class MainWindow(QMainWindow):
         if self.canvas.editing():
             selected_shapes = []
             for item in self.labelList.selectedItems():
-                selected_shapes.append(self.itemsToShapes[item])
+                if not isinstance(item, HashableQListWidgetItem):
+                    row = self.labelList.row(item)
+                    item = self.labelList.item(row)
+                if item in self.itemsToShapes:
+                    selected_shapes.append(self.itemsToShapes[item])
             if selected_shapes:
                 self.canvas.selectShapes(selected_shapes)
             else:
