@@ -25,7 +25,7 @@ ALLOWED_KEYS = {
     "vc_manu_addr",
 }
 
-UNRECOGNIZED_TEXTS = {"待识别", ""}
+UNRECOGNIZED_TEXTS = {"待识别"}
 
 
 def main():
