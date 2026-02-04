@@ -332,5 +332,5 @@ PPOCRLabel supports three ways to export Label.txt
 检查并修改标注
 python tools/check_kie_labels.py --label_txt "D:\vehicle_compliance_2\Label.txt" --dedup 
 
-替换识别结果
+替换识别结果,将识别的排量和排放标准一替换为-
  python tools/fix_labeltxt_unrecognized.py --label_txt "D:\vehicle_compliance_1\Label.txt"
