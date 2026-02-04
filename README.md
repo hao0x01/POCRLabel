@@ -322,7 +322,11 @@ PPOCRLabel supports three ways to export Label.txt
 
 
 ### 
-运行
+先对图片进行方向纠正
+
+ python \PPOCRLabel\tools\fixdirection.py
+
+然后运行
  python PPOCRLabel.py --lang ch --kie True --use_ocr_api True --ocr_api_url http://192.168.50.20:8866/ocr/prediction
 
 检查并修改标注
