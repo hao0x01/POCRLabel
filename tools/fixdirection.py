@@ -42,3 +42,4 @@ def process_dir(root_dir):
 if __name__ == "__main__":
     IMAGE_DIR = r"D:\vehicle_compliance_2" 
     process_dir(IMAGE_DIR)
+
