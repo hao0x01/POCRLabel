@@ -25,8 +25,8 @@ def normalize_text(text: str) -> str:
     if text is None:
         return ""
     t = text.strip()
-    # remove leading numbers and punctuation like "1.", "1¡¢", "1)"
-    t = re.sub(r"^\s*\d+\s*[\.¡¢)£©:]\s*", "", t)
+    # remove leading numbers and punctuation like "1.", "1ã€", "1)"
+    t = re.sub(r"^\s*\d+\s*[\.ã€)ï¼‰:ï¼š]\s*", "", t)
     # remove spaces and fullwidth spaces
     t = re.sub(r"[\s\u3000]+", "", t)
     return t
@@ -68,7 +68,7 @@ def extract_inline_value(text: str, label_patterns: List[re.Pattern]) -> str:
             start, end = m.span()
             leftover = (norm[:start] + norm[end:]).strip()
             # also strip common separators
-            leftover = leftover.strip(":£º/\-| ")
+            leftover = leftover.strip(":ï¼š/\\-| ")
             return leftover
     return ""
 
@@ -113,48 +113,48 @@ def main() -> int:
 
     # label specs: each entry maps a label box to N value boxes (value_keys length)
     label_specs = [
-        {"patterns": [r"ºÏ¸ñÖ¤±àºÅ"], "value_keys": ["vc_no"]},
-        {"patterns": [r"·¢Ö¤ÈÕÆÚ"], "value_keys": ["vc_issue_date"]},
-        {"patterns": [r"³µÁ¾ÖÆÔìÆóÒµÃû³Æ"], "value_keys": ["vc_manu_enterprise"]},
+        {"patterns": [r"åˆæ ¼è¯ç¼–å·"], "value_keys": ["vc_no"]},
+        {"patterns": [r"å‘è¯æ—¥æœŸ"], "value_keys": ["vc_issue_date"]},
+        {"patterns": [r"è½¦è¾†åˆ¶é€ ä¼ä¸šåç§°"], "value_keys": ["vc_manu_enterprise"]},
         {
-            "patterns": [r"³µÁ¾Æ·ÅÆ/³µÁ¾Ãû³Æ", r"³µÁ¾Æ·ÅÆ", r"³µÁ¾Ãû³Æ"],
+            "patterns": [r"è½¦è¾†å“ç‰Œ/è½¦è¾†åç§°", r"è½¦è¾†å“ç‰Œ", r"è½¦è¾†åç§°"],
             "value_keys": ["vc_brands", "vc_type"],
         },
-        {"patterns": [r"³µÁ¾ĞÍºÅ"], "value_keys": ["vc_model_no"]},
-        {"patterns": [r"³µÁ¾Ê¶±ğ´úºÅ/³µ¼ÜºÅ", r"³µ¼ÜºÅ"], "value_keys": ["vc_vin"]},
-        {"patterns": [r"³µÉíÑÕÉ«"], "value_keys": ["vc_color"]},
-        {"patterns": [r"·¢¶¯»úĞÍºÅ"], "value_keys": ["vc_engine_model_no"]},
-        {"patterns": [r"·¢¶¯»úºÅ"], "value_keys": ["vc_engineno"]},
-        {"patterns": [r"È¼ÁÏÖÖÀà", r"È¼ÁÏÀàĞÍ"], "value_keys": ["vc_fuel"]},
+        {"patterns": [r"è½¦è¾†å‹å·"], "value_keys": ["vc_model_no"]},
+        {"patterns": [r"è½¦è¾†è¯†åˆ«ä»£å·/è½¦æ¶å·", r"è½¦æ¶å·"], "value_keys": ["vc_vin"]},
+        {"patterns": [r"è½¦èº«é¢œè‰²"], "value_keys": ["vc_color"]},
+        {"patterns": [r"å‘åŠ¨æœºå‹å·"], "value_keys": ["vc_engine_model_no"]},
+        {"patterns": [r"å‘åŠ¨æœºå·"], "value_keys": ["vc_engineno"]},
+        {"patterns": [r"ç‡ƒæ–™ç§ç±»", r"ç‡ƒæ–™ç±»å‹"], "value_keys": ["vc_fuel"]},
         {
-            "patterns": [r"ÅÅÁ¿ºÍ¹¦ÂÊ", r"ÅÅÁ¿/¹¦ÂÊ", r"ÅÅÁ¿ºÍ¹¦ÂÊ£¨ml/kW£©"],
+            "patterns": [r"æ’é‡å’ŒåŠŸç‡", r"æ’é‡/åŠŸç‡", r"æ’é‡å’ŒåŠŸç‡ï¼ˆml/kWï¼‰"],
             "value_keys": ["vc_displace", "vc_power"],
         },
-        {"patterns": [r"ÅÅ·Å±ê×¼"], "value_keys": ["vc_emission_standard"]},
-        {"patterns": [r"ÓÍºÄ"], "value_keys": ["vc_fuel_consumption"]},
+        {"patterns": [r"æ’æ”¾æ ‡å‡†"], "value_keys": ["vc_emission_standard"]},
+        {"patterns": [r"æ²¹è€—"], "value_keys": ["vc_fuel_consumption"]},
         {
-            "patterns": [r"ÍâÀª³ß´ç", r"ÍâÀ«³ß´ç"],
+            "patterns": [r"å¤–å»“å°ºå¯¸", r"å¤–é˜”å°ºå¯¸"],
             "value_keys": [
                 "vc_overall_dimensions",
                 "vc_overall_dimensions",
                 "vc_overall_dimensions",
             ],
         },
-        {"patterns": [r"ÂÖÌ¥Êı"], "value_keys": ["vc_tire_count"]},
-        {"patterns": [r"ÂÖÌ¥¹æ¸ñ"], "value_keys": ["vc_tyre_size"]},
+        {"patterns": [r"è½®èƒæ•°"], "value_keys": ["vc_tire_count"]},
+        {"patterns": [r"è½®èƒè§„æ ¼"], "value_keys": ["vc_tyre_size"]},
         {
-            "patterns": [r"ÂÖ¾à", r"ÂÖ¾à£¨Ç°/ºó£©", r"ÂÖ¾à\(Ç°/ºó\)"],
+            "patterns": [r"è½®è·", r"è½®è·ï¼ˆå‰/åï¼‰", r"è½®è·\(å‰/å\)"],
             "value_keys": ["vc_track", "vc_track"],
         },
-        {"patterns": [r"Öá¾à"], "value_keys": ["vc_wheelbase"]},
-        {"patterns": [r"ÖáºÉ"], "value_keys": ["vc_axle_load"]},
-        {"patterns": [r"ÖáÊı"], "value_keys": ["vc_axle_count"]},
-        {"patterns": [r"×ªÏòĞÎÊ½"], "value_keys": ["vc_steering_type"]},
-        {"patterns": [r"×ÜÖÊÁ¿"], "value_keys": ["vc_totalw"]},
-        {"patterns": [r"Õû±¸ÖÊÁ¿"], "value_keys": ["vc_curbw"]},
-        {"patterns": [r"¶î¶¨ÔØ¿Í"], "value_keys": ["vc_carrying_num"]},
-        {"patterns": [r"×î¸ßÉè¼Æ³µËÙ"], "value_keys": ["vc_max_speed"]},
-        {"patterns": [r"³µÁ¾ÖÆÔìÈÕÆÚ"], "value_keys": ["vc_manu_date"]},
+        {"patterns": [r"è½´è·"], "value_keys": ["vc_wheelbase"]},
+        {"patterns": [r"è½´è·"], "value_keys": ["vc_axle_load"]},
+        {"patterns": [r"è½´æ•°"], "value_keys": ["vc_axle_count"]},
+        {"patterns": [r"è½¬å‘å½¢å¼"], "value_keys": ["vc_steering_type"]},
+        {"patterns": [r"æ€»è´¨é‡"], "value_keys": ["vc_totalw"]},
+        {"patterns": [r"æ•´å¤‡è´¨é‡"], "value_keys": ["vc_curbw"]},
+        {"patterns": [r"é¢å®šè½½å®¢"], "value_keys": ["vc_carrying_num"]},
+        {"patterns": [r"æœ€é«˜è®¾è®¡è½¦é€Ÿ"], "value_keys": ["vc_max_speed"]},
+        {"patterns": [r"è½¦è¾†åˆ¶é€ æ—¥æœŸ"], "value_keys": ["vc_manu_date"]},
     ]
 
     compiled_specs = []
